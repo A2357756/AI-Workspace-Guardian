@@ -3,14 +3,12 @@ import sqlite3
 DB_FILE = "guardian.db"
 
 def init_db():
-    #連結到"guardian.db"資料庫，如果不存在則會自動建立
     conn = sqlite3.connect(DB_FILE)
-    #連線到資料庫後，建立一個cursor物件，用來執行SQL語句
     cursor = conn.cursor()
-    #建立events資料表，如果表存在就跳過。
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            folder TEXT NOT NULL,
             timestamp TEXT NOT NULL,
             path TEXT NOT NULL,
             event_type TEXT NOT NULL
@@ -18,46 +16,61 @@ def init_db():
     """)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS files (
-            path TEXT PRIMARY KEY,
+            folder TEXT NOT NULL,
+            path TEXT NOT NULL,
             sha256 TEXT NOT NULL,
-            last_seen TEXT NOT NULL
+            last_seen TEXT NOT NULL,
+            PRIMARY KEY (folder, path)
         )
     """)
-    #SQL寫入
     conn.commit()
-    #關閉連線
     conn.close()
 
-def log_event(path, event_type):
+def log_event(folder, path, event_type):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute(
-        #?佔位符，安全寫入，避免SQL注入攻擊
-        "INSERT INTO events (timestamp, path, event_type) VALUES (datetime('now', 'localtime'), ?, ?)",
-        (path, event_type)
+        "INSERT INTO events (folder, timestamp, path, event_type) VALUES (?, datetime('now', 'localtime'), ?, ?)",
+        (folder, path, event_type)
     )
     conn.commit()
     conn.close()
 
-def get_baseline():
-    """讀取目前資料庫裡所有檔案的 hash,格式跟原本的 baseline.json 一樣是字典"""
+def get_baseline(folder):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute("SELECT path, sha256 FROM files")
+    cursor.execute("SELECT path, sha256 FROM files WHERE folder = ?", (folder,))
     rows = cursor.fetchall()
     conn.close()
-    return dict(rows)  # 把 [(path, hash), ...] 轉成 {path: hash, ...}
+    return dict(rows)
 
-def update_file(path, sha256):
-    """新增或更新一筆檔案的 hash 記錄"""
+def update_file(folder, path, sha256):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute("""
-        INSERT INTO files (path, sha256, last_seen)
-        VALUES (?, ?, datetime('now', 'localtime'))
-        ON CONFLICT(path) DO UPDATE SET
+        INSERT INTO files (folder, path, sha256, last_seen)
+        VALUES (?, ?, ?, datetime('now', 'localtime'))
+        ON CONFLICT(folder, path) DO UPDATE SET
             sha256 = excluded.sha256,
             last_seen = excluded.last_seen
-    """, (path, sha256))
+    """, (folder, path, sha256))
     conn.commit()
     conn.close()
+
+def delete_file(folder, path):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM files WHERE folder = ? AND path = ?", (folder, path))
+    conn.commit()
+    conn.close()
+
+def get_events_since(folder, start_time):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT timestamp, path, event_type FROM events WHERE folder = ? AND timestamp >= ? ORDER BY id",
+        (folder, start_time)
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return rows

@@ -1,8 +1,10 @@
 import json
 import time
 import argparse
+import winsound
 from scanner import scan_files
-from database import init_db, log_event, get_baseline, update_file
+import datetime
+from database import init_db, log_event, get_baseline, update_file, delete_file, get_events_since
 from plyer import notification
 
 class Colors:
@@ -32,21 +34,19 @@ def compare(old, new):
     all_paths = set(old.keys()) | set(new.keys())
     events_found = False
     for path in all_paths:
-        #檔案是新增的
         if path not in old:
-            print(f"[CREATED] {path}")
+            print(f"{Colors.GREEN}[CREATED] {path}{Colors.RESET}")
             log_event(path, "CREATED")
-            send_alert(path, "新增")
             events_found = True
-        #檔案是被刪除
         elif path not in new:
-            print(f"[DELETED] {path}")
+            print(f"{Colors.RED}[DELETED] {path}{Colors.RESET}")
             log_event(path, "DELETED")
             send_alert(path, "刪除")
+            winsound.Beep(1000, 500)
+            delete_file(path)
             events_found = True
-        #檔案是被修改(hash值不同)
         elif old[path] != new[path]:
-            print(f"[MODIFIED] {path}")
+            print(f"{Colors.YELLOW}[MODIFIED] {path}{Colors.RESET}")
             log_event(path, "MODIFIED")
             send_alert(path, "修改")
             events_found = True
@@ -75,20 +75,26 @@ def run_once(files_to_watch):
     
 #迴圈執行
 if __name__ == "__main__":
-    init_db() 
+    init_db()
+    start_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
     parser = argparse.ArgumentParser(description="AI Workspace Guardian - 檔案完整性監控工具")
-    parser.add_argument(
-        "--interval",
-        type=int,
-        default=5,
-        help="掃描間隔秒數(預設 5 秒)"
-    )
+    parser.add_argument("--interval", type=int, default=5, help="掃描間隔秒數(預設 5 秒)")
     args = parser.parse_args()
     files_to_watch = load_config()
+
     print(f"開始監控,每 {args.interval} 秒掃描一次(Ctrl+C 停止)")
+
     try:
         while True:
             run_once(files_to_watch)
             time.sleep(args.interval)
     except KeyboardInterrupt:
         print("\n監控已停止。")
+        print("\n=== 本次執行歷史事件 ===")
+        events = get_events_since(start_time)
+        if not events:
+            print("(本次執行期間無事件)")
+        else:
+            for timestamp, path, event_type in events:
+                print(f"{timestamp} | {event_type} | {path}")
